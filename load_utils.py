@@ -3,7 +3,7 @@
 import pandas as pd
 
 
-def load_train_data(path='data/X_train_v2.csv', time_index_only=True):
+def load_train_data(path='data/X_train_v2.csv', time_index_only=True, crop_train_period=True):
     """
     Load the training data into a dataframe.
 
@@ -15,6 +15,9 @@ def load_train_data(path='data/X_train_v2.csv', time_index_only=True):
         Whether to have 1 or 2 multiindex.
             * If True, the index on axis 0 will be 'Time', and everything else on axis 1.
             * If False, the index on axis 0 will be a multiindex with ['Time', 'WF'] and everything else on axis 1.
+            It can be convenient to align with the training data.
+    crop_train_period: bool, optional
+        Whether to crop the time series to the period: 2018-05-01 -> 2019-01-15.
 
     Returns
     -------
@@ -31,34 +34,29 @@ def load_train_data(path='data/X_train_v2.csv', time_index_only=True):
     df['WF'] = df['WF'].astype('category')
     df['WF'] = df['WF'].cat.rename_categories(range(1, 7))
 
-    if not time_index_only:
-        # Special indexing having time AND WF id
-        index_wf_time = pd.MultiIndex.from_frame(df.reset_index()[['Time', 'WF']])
-        df = df.set_index(index_wf_time)
-        df = df.drop('WF', axis=1)
-
     # First we define the multiindex we will use
-    columns = df.columns[1:] if time_index_only else df.columns
-    multiindex = [tuple(col.split('_')) for col in columns]
+    multiindex = [tuple(col.split('_')) for col in df.columns[1:]]
     for i, (nwp, hour, day, var) in enumerate(multiindex):
         multiindex[i] = (int(nwp[-1]), 0 if day == 'D' else int(day[1:]), int(hour[:2]), var)
     multiindex = pd.MultiIndex.from_tuples(multiindex, names=['NWP', 'D', 'h', 'var'])
 
-    if time_index_only:
-        # Then we go through each windfarm
-        list_of_groups = []
-        list_of_labels = []
+    # Then we go through each windfarm
+    list_of_groups = []
+    list_of_labels = []
 
-        for labels, group in df.groupby('WF'):
-            group = group.drop('WF', axis=1)
-            group.columns = multiindex
-            list_of_labels.append(labels)
-            list_of_groups.append(group)
+    for labels, group in df.groupby('WF'):
+        group = group.drop('WF', axis=1)
+        group.columns = multiindex
+        list_of_labels.append(labels)
+        list_of_groups.append(group)
 
-        # And finally we concatenate all WF
-        df = pd.concat(list_of_groups, axis=1, keys=list_of_labels, names=['WF'])
+    # And finally we concatenate all WF
+    df = pd.concat(list_of_groups, axis=1, keys=list_of_labels, names=['WF'])
 
-    else:
-        df.columns = multiindex
+    if crop_train_period:
+        df = df.loc[pd.to_datetime('2018-05-01 00:00:00'):pd.to_datetime('2019-01-15 23:00:00')]
+
+    if not time_index_only:
+        df = df.stack(level='WF')
 
     return df
