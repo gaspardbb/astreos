@@ -1,6 +1,9 @@
 # Load the dataframes, update the columns and indices
+import functools
+import inspect
 
 import pandas as pd
+import numpy as np
 
 
 def load_train_data(path='data/X_train_v2.csv', time_index_only=True, crop_train_period=True):
@@ -60,3 +63,59 @@ def load_train_data(path='data/X_train_v2.csv', time_index_only=True, crop_train
         df = df.stack(level='WF')
 
     return df
+
+
+def save_multiindex(df: pd.DataFrame, path='save/'):
+    """Save the standard multiindex used to check the inputs when doing feature engineering."""
+    np.save(f'{path}multiindex.npy', df.columns.to_numpy())
+
+
+def load_multiindex(path='save/multiindex.npy'):
+    """Load a multiindex."""
+    return pd.MultiIndex.from_tuples(np.load(path, allow_pickle=True), names=['WF', 'NWP', 'D', 'h', 'var'])
+
+
+class CheckFeatures:
+
+    def __init__(self, path='save/multiindex.npy'):
+        self.multiindex = load_multiindex(path)
+        self.n_calls = {}
+
+    def validate(self, func):
+        # Check if the function has a df parameter, using inspect.signature()
+        signature = inspect.signature(func)
+        if 'df' not in signature.parameters:
+            raise ValueError("A feature function should have a `df` parameter.")
+
+        # Create the decorator
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            # Retrieve the df value
+            this_df = signature.bind(*args, **kwargs).arguments['df']
+            if not (this_df.columns == self.multiindex).all():
+                raise ValueError("The df you have passed to this function does not have the right multiindex for "
+                                 "the columns.")
+
+            # Check the return value
+            return_value = func(*args, **kwargs)
+
+            # If it is a DataFrame
+            if not isinstance(return_value, pd.DataFrame):
+                raise ValueError(f"You need to return a DataFrame, but you return a {type(return_value)}.")
+
+            # If it has the right number of rows
+            if not return_value.shape[0] == this_df.shape[0]:
+                raise ValueError("You're returning a DataFrame which does not have the same number of rows. "
+                                 f"Input: {this_df.shape[0]}. Output: {return_value.shape[0]}.")
+
+            # If it is a MultiIndex, then it should have a level named 'WF'
+            if isinstance(return_value.columns, pd.MultiIndex) and not 'WF' in return_value.columns.names:
+                raise ValueError("You're returning a DataFrame with a MultiIndex, but it does not have a level named: "
+                                 "'WF'.")
+            return return_value
+        return wrapper
+
+
+if __name__ == '__main__':
+    pass
+    # df = load_train_data()
