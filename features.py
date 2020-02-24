@@ -2,15 +2,12 @@ import pandas as pd
 import numpy as np
 
 from load_utils import CheckFeatures
-hint = CheckFeatures()
 
-
-@hint.validate
+@CheckFeatures.validate
 def mean_of_var(df: pd.DataFrame, var):
     grouped = df.groupby('WF', axis=1)
     #TODO: complete
-    grouped.agg()
-    pass
+    return df.iloc[:, [1,2]]
 
 
 if __name__ == '__main__':

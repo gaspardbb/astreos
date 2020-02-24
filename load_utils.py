@@ -77,22 +77,27 @@ def load_multiindex(path='save/multiindex.npy'):
 
 class CheckFeatures:
 
-    def __init__(self, path='save/multiindex.npy'):
-        self.multiindex = load_multiindex(path)
-        self.n_calls = {}
+    path='save/multiindex.npy'
+    multiindex = load_multiindex(path)
+    n_calls = {}
 
-    def validate(self, func):
+    @staticmethod
+    def validate(func):
         # Check if the function has a df parameter, using inspect.signature()
         signature = inspect.signature(func)
         if 'df' not in signature.parameters:
             raise ValueError("A feature function should have a `df` parameter.")
-
         # Create the decorator
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            # Retrieve the df value
             this_df = signature.bind(*args, **kwargs).arguments['df']
-            if not (this_df.columns == self.multiindex).all():
+
+            # Retrieve the df value
+            if not isinstance(this_df, pd.DataFrame):
+                raise ValueError(f"You need to supply a DataFrame, but you pass a {type(this_df)}.")
+
+            # Check MultiIndex
+            if not (this_df.columns == CheckFeatures.multiindex).all():
                 raise ValueError("The df you have passed to this function does not have the right multiindex for "
                                  "the columns.")
 
