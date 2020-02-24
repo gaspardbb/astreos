@@ -77,7 +77,7 @@ def load_multiindex(path='save/multiindex.npy'):
 
 class CheckFeatures:
 
-    path='save/multiindex.npy'
+    path = 'save/multiindex.npy'
     multiindex = load_multiindex(path)
     n_calls = {}
 
@@ -87,6 +87,9 @@ class CheckFeatures:
         signature = inspect.signature(func)
         if 'df' not in signature.parameters:
             raise ValueError("A feature function should have a `df` parameter.")
+
+        CheckFeatures.n_calls[func.__name__] = 0
+
         # Create the decorator
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -97,9 +100,13 @@ class CheckFeatures:
                 raise ValueError(f"You need to supply a DataFrame, but you pass a {type(this_df)}.")
 
             # Check MultiIndex
-            if not (this_df.columns == CheckFeatures.multiindex).all():
-                raise ValueError("The df you have passed to this function does not have the right multiindex for "
-                                 "the columns.")
+            try:
+                if not (this_df.columns == CheckFeatures.multiindex).all():
+                    raise ValueError("The df you have passed to this function does not have the right multiindex for "
+                                     "the columns.")
+            except Exception as e:
+                raise ValueError(f"Your DataFrame do not have the right index. When comparing your column's index "
+                                 f"with the reference's index, got exception: {e}")
 
             # Check the return value
             return_value = func(*args, **kwargs)
@@ -117,6 +124,8 @@ class CheckFeatures:
             if isinstance(return_value.columns, pd.MultiIndex) and not 'WF' in return_value.columns.names:
                 raise ValueError("You're returning a DataFrame with a MultiIndex, but it does not have a level named: "
                                  "'WF'.")
+
+            CheckFeatures.n_calls[func.__name__] += 1
             return return_value
         return wrapper
 
