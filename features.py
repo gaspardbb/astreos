@@ -19,6 +19,16 @@ def wind_speed(df: pd.DataFrame):
     return result
 
 
+@CF.validate
+def wind_direction(df: pd.DataFrame):
+    u = df.xs('U', axis=1, level='var')
+    v = df.xs('V', axis=1, level='var')
+    result = np.arccos(u*v/np.abs(u*v))
+    result = result.groupby('WF', axis=1).mean()
+    result.columns = index_to_multiindex('angle', result.columns)
+    return result
+
+
 def check_isin(value, accepted_values):
     if not value in accepted_values:
         raise ValueError(f"You did not pass a good value. Got: {value} when accepted values are: {accepted_values}.")
@@ -33,5 +43,6 @@ def index_to_multiindex(new_key, index, level='var'):
 if __name__ == '__main__':
     from load_utils import load_train_data
     df = load_train_data()
-    r = wind_speed(df)
-    t = mean_of_var(df, 'T')
+    a = wind_direction(df)
+    # r = wind_speed(df)
+    # t = mean_of_var(df, 'T')
