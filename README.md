@@ -14,7 +14,7 @@ But: rendre l'aggrégation de tous les features et cie plus simple.
   * sont données à **100m**  pour NWP1, NWP2, NWP3 et à **10m** pour NWP4 -> attention à l'aggrégation.
   * la décomposition **vitesse** / **angle** peut être judicieuse.
   
-* Séparation *train set / public test set / private test set * : Effet saisonnier.
+* Séparation *train set / public test set / private test set* : Effet saisonnier.
  
 
 ## À faire
