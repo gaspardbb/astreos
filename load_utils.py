@@ -7,13 +7,26 @@ import pandas as pd
 import numpy as np
 
 
-def load_train_data(path='data/X_train_v2.csv', time_index_only=True, crop_train_period=True):
+def index_to_multiindex(new_key, index, level='var'):
+    multiindex = pd.MultiIndex.from_arrays([index, [new_key] * len(index)],
+                                           names=index.names + [level])
+    return multiindex
+
+
+def load_train_data(path_train='data/X_train_v2.csv', time_index_only=True, crop_train_period=True):
+    DeprecationWarning("Deprecated. Use `load_data()`.")
+    return load_data(path_train=path_train, time_index_only=time_index_only, crop_train_period=crop_train_period)[0]
+
+
+def load_data(path_train='data/X_train_v2.csv',
+              path_test="data/Y_train_sl9m6Jh.csv",
+              time_index_only=True, crop_train_period=True):
     """
     Load the training data into a dataframe.
 
     Parameters
     ----------
-    path: str
+    path_train: str
         Path in which to find the X_train csv file.
     time_index_only: bool, optional
         Whether to have 1 or 2 multiindex.
@@ -28,7 +41,8 @@ def load_train_data(path='data/X_train_v2.csv', time_index_only=True, crop_train
     df: pd.DataFrame
         A pandas dataframe.
     """
-    df = pd.read_csv(path, index_col='ID')
+    df = pd.read_csv(path_train, index_col='ID')
+    df_target = pd.read_csv(path_test, index_col='ID')
 
     # Otherwise, the time column is a dumb index column
     df = df.set_index('Time')
@@ -37,6 +51,13 @@ def load_train_data(path='data/X_train_v2.csv', time_index_only=True, crop_train
     # Otherwise, dtype=Object=terrible
     df['WF'] = df['WF'].astype('category')
     df['WF'] = df['WF'].cat.rename_categories(range(1, 7))
+
+    # Before transforming the index of the DF, we add the WF information to the target
+    df_target.index = df.index
+    df_target['WF'] = df['WF']
+    # We pivot it so that the WF is in the columns
+    df_target = df_target.pivot(columns='WF', values='Production')
+    df_target.columns = index_to_multiindex('Production', df_target.columns, level="var")
 
     # First we define the multiindex we will use
     multiindex = [tuple(col.split('_')) for col in df.columns[1:]]
@@ -59,11 +80,12 @@ def load_train_data(path='data/X_train_v2.csv', time_index_only=True, crop_train
 
     if crop_train_period:
         df = df.loc[pd.to_datetime('2018-05-01 00:00:00'):pd.to_datetime('2019-01-15 23:00:00')]
+        df_target = df_target.loc[pd.to_datetime('2018-05-01 00:00:00'):pd.to_datetime('2019-01-15 23:00:00')]
 
     if not time_index_only:
         df = df.stack(level='WF')
 
-    return df
+    return df, df_target
 
 
 def save_multiindex(df: pd.DataFrame, path='save/'):
@@ -80,8 +102,8 @@ class CheckFeatures:
 
     path = 'save/multiindex.npy'
     multiindex = load_multiindex(path)
-    n_calls = {}
 
+    n_calls = {}
     @staticmethod
     def validate(func=None, *, result_only=False):
         # Handling of default values
@@ -137,6 +159,7 @@ class CheckFeatures:
         return wrapper
 
 
+
+
 if __name__ == '__main__':
-    pass
-    # df = load_train_data()
+    df_features, df_target = load_data(time_index_only=False)

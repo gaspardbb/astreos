@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 
-from load_utils import CheckFeatures as CF
+from load_utils import CheckFeatures as CF, index_to_multiindex
 
 
 @CF.validate
@@ -85,21 +85,18 @@ def all_features(df: pd.DataFrame, get_first_diff=True):
     return features
 
 
-
 def check_isin(value, accepted_values):
     if not value in accepted_values:
         raise ValueError(f"You did not pass a good value. Got: {value} when accepted values are: {accepted_values}.")
 
 
-def index_to_multiindex(new_key, index, level='var'):
-    multiindex = pd.MultiIndex.from_arrays([index, [new_key] * len(index)],
-                                           names=index.names + [level])
-    return multiindex
-
-
 if __name__ == '__main__':
-    from load_utils import load_train_data
-    df = load_train_data()
+    from load_utils import load_data
+    df, target = load_data()
     a = wind_direction(df)
     a_diff = first_diff(a)
     features = all_features(df)
+
+    # All that for:
+    full_df = pd.concat([features, target], axis=1)
+    # Régale toi
