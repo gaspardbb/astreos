@@ -6,6 +6,17 @@
 * La création de features à la main est dans `features.py`, et est standardisée (cf. `feature_engineering.ipynb`). 
 But: rendre l'aggrégation de tous les features et cie plus simple.
 
+## À noter
+
+* WF: "The considered Wind Farm. WF ranges from WF1 to WF6. Be aware that this prediction problem is totally dependent to the WF considered. The statistical link between input variables and wind power production is completely different from one WF to another. It could be judicious to train specific prediction algorithms for each WF, instead of training a unique algorithm which could be unable to model the behavior of each WF."
+
+* U et V : 
+  * sont données à **100m**  pour NWP1, NWP2, NWP3 et à **10m** pour NWP4 -> attention à l'aggrégation.
+  * la décomposition **vitesse** / **angle** peut être judicieuse.
+  
+* Séparation *train set / public test set / private test set* : Effet saisonnier.
+ 
+
 ## À faire
 
 ### Features
