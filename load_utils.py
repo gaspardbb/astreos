@@ -1,6 +1,7 @@
 # Load the dataframes, update the columns and indices
 import functools
 import inspect
+from functools import partial
 
 import pandas as pd
 import numpy as np
@@ -82,7 +83,11 @@ class CheckFeatures:
     n_calls = {}
 
     @staticmethod
-    def validate(func):
+    def validate(func=None, *, result_only=False):
+        # Handling of default values
+        if func is None:
+            return partial(CheckFeatures.validate, result_only=result_only)
+
         # Check if the function has a df parameter, using inspect.signature()
         signature = inspect.signature(func)
         if 'df' not in signature.parameters:
@@ -95,18 +100,20 @@ class CheckFeatures:
         def wrapper(*args, **kwargs):
             this_df = signature.bind(*args, **kwargs).arguments['df']
 
-            # Retrieve the df value
-            if not isinstance(this_df, pd.DataFrame):
-                raise ValueError(f"You need to supply a DataFrame, but you pass a {type(this_df)}.")
+            if not result_only:
 
-            # Check MultiIndex
-            try:
-                if not (this_df.columns == CheckFeatures.multiindex).all():
-                    raise ValueError("The df you have passed to this function does not have the right multiindex for "
-                                     "the columns.")
-            except Exception as e:
-                raise ValueError(f"Your DataFrame do not have the right index. When comparing your column's index "
-                                 f"with the reference's index, got exception: {e}")
+                # Retrieve the df value
+                if not isinstance(this_df, pd.DataFrame):
+                    raise ValueError(f"You need to supply a DataFrame, but you pass a {type(this_df)}.")
+
+                # Check MultiIndex
+                try:
+                    if not (this_df.columns == CheckFeatures.multiindex).all():
+                        raise ValueError("The df you have passed to this function does not have the right multiindex for "
+                                         "the columns.")
+                except Exception as e:
+                    raise ValueError(f"Your DataFrame do not have the right index. When comparing your column's index "
+                                     f"with the reference's index, got exception: {e}")
 
             # Check the return value
             return_value = func(*args, **kwargs)

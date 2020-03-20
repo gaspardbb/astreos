@@ -35,6 +35,15 @@ Créer un fichier qui s'inscrive bien dans la pipeline, ie. qui prenne en entré
 * var: mean_T, mean_U, ...
 
 #### Architecture
-Plusieurs stratégies à essayer:
-* 1 modèle pour 1 WF centré
-* + 1 modèle pour superposition de tous les WF centr***ées***. 
+
+##### Proposition 1
+
+Faire un modèle pour chaque WF = 6 modèles. Entraîner sur données de chaque WF séparément. 
+
+Fit = prendre un modèle puis évaluer avec ce modèle.
+
+##### Proposition 2
+
+Proposition 1. Puis rajouter un modèle qui s'entraîne sur toutes les données, avec des features sans offset: par exemple, des différences.
+
+Fit = prendre le modèle spécifique à la WF. Prendre le méta modèle. Résultat = moyenne pondérée des deux, avec coefficient trouvé par validation croisée.

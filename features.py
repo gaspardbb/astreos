@@ -29,6 +29,21 @@ def wind_direction(df: pd.DataFrame):
     return result
 
 
+@CF.validate(result_only=True)
+def first_diff(df: pd.DataFrame, var_level=None):
+    """Compute the first difference of a given variable. If there is only one level value for the `var` level,
+    you can leave that parameter undefined."""
+    if var_level is None:
+        level_values = df.columns.get_level_values("var").unique()
+        if level_values.size != 1:
+            raise ValueError('You did not pass the `var_level` parameter but the df is not explicit; got multiple '
+                             'possible level values:' + level_values)
+        var_level = level_values[0]
+    result = df.xs(var_level, axis=1, level="var").diff()
+    result.columns = index_to_multiindex(f"{var_level}_diff", result.columns)
+    return result
+
+
 def check_isin(value, accepted_values):
     if not value in accepted_values:
         raise ValueError(f"You did not pass a good value. Got: {value} when accepted values are: {accepted_values}.")
@@ -44,5 +59,6 @@ if __name__ == '__main__':
     from load_utils import load_train_data
     df = load_train_data()
     a = wind_direction(df)
+    a_diff = first_diff(a)
     # r = wind_speed(df)
     # t = mean_of_var(df, 'T')
