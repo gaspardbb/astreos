@@ -17,11 +17,11 @@ from load_utils import load_data
 from logzero import logger, loglevel
 
 
-def split_data_wf(full_df):
+def split_data_wf(full_df: pd.DataFrame):
     """ Get separated datasets for each windfarm """
     full_df_wfs = []
-    for i in set(full_df.columns.levels[0]):
-        full_df_wfs.append(full_df.xs(i, axis=1))
+    for i in set(full_df.columns.get_level_values('WF')):
+        full_df_wfs.append(full_df.xs(i, axis=1, level='WF'))
     return full_df_wfs
 
 
@@ -33,6 +33,9 @@ def handle_nan(X):
         X = pd.DataFrame(X)
     Z = X.fillna(method='bfill')
     Z = Z.fillna(method='ffill')
+    # if pd.isna(Z).values.any():
+    #     In some cases,
+        # Z = Z.interpolate()
     return Z
 
 
@@ -50,12 +53,12 @@ class SkRegressorFull(object):
     def fit(self, X, Y=None, verbose=0):
         """ Will consider X as the full dataset if Y is None, otherwise behave as sklearn models do """
 
-        handle_nan_trans = FunctionTransformer(handle_nan, check_inverse=False, validate=True)
+        handle_nan_trans = FunctionTransformer(handle_nan, check_inverse=False, validate=False)
         steps = [('imputer', handle_nan_trans), ('scaler', StandardScaler()), ('model', self.model())]
         self.pipeline = Pipeline(steps)
         self.scorer = make_scorer(CAPE_CNR_function, greater_is_better=False)
         self.grid = GridSearchCV(self.pipeline, param_grid=self.model_params, cv=5, scoring=self.scorer,
-                                 verbose=verbose)
+                                 verbose=verbose, error_score='raise')
 
         self.best_regressors = []
 
@@ -109,7 +112,7 @@ class SkRegressorFull(object):
                 "Make sure you named your model parameters with names starting with 'model__, error may come from that'")
             raise e
         logger.info("score on test = %3.2f" % (- self.grid.score(X_test, y_test)))
-        logger.info(self.grid.best_params_)
+        logger.debug(self.grid.best_params_)
         self.best_regressors.append(clone(self.pipeline))
         self.best_regressors[-1]['model'].set_params(**extract_params(self.grid.best_params_))
 
