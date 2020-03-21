@@ -42,6 +42,8 @@ def k_diff(df: pd.DataFrame, k=1, var_level=None):
         var_level = level_values[0]
     result = df.xs(var_level, axis=1, level="var").diff(k)
     result.columns = index_to_multiindex(f"{var_level}_{k}_diff", result.columns)
+    # Remove NaN in the first line
+    result.iloc[0] = result.iloc[1]
     return result
 
 
@@ -101,4 +103,9 @@ if __name__ == '__main__':
 
     # All that for:
     full_df = pd.concat([features, target], axis=1)
-    # Régale toi
+    # Puts WF in columns
+    full_df = full_df.stack('WF').reset_index(level='WF')
+    full_df.columns.set_names('', inplace=True)
+
+    import matplotlib.pyplot as plt
+    import seaborn as sns
