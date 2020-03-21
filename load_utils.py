@@ -1,10 +1,13 @@
 # Load the dataframes, update the columns and indices
 import functools
 import inspect
+import os
 from functools import partial
 
-import pandas as pd
 import numpy as np
+import pandas as pd
+
+from utils.utils import get_project_root
 
 
 def index_to_multiindex(new_key, index, level='var'):
@@ -41,6 +44,8 @@ def load_data(path_train='data/X_train_v2.csv',
     df: pd.DataFrame
         A pandas dataframe.
     """
+    path_train = os.path.join(get_project_root(), path_train)
+    path_test = os.path.join(get_project_root(), path_test)
     df = pd.read_csv(path_train, index_col='ID')
     df_target = pd.read_csv(path_test, index_col='ID')
 
@@ -99,11 +104,11 @@ def load_multiindex(path='save/multiindex.npy'):
 
 
 class CheckFeatures:
-
-    path = 'save/multiindex.npy'
+    path = os.path.join(get_project_root(), 'save/multiindex.npy')
     multiindex = load_multiindex(path)
 
     n_calls = {}
+
     @staticmethod
     def validate(func=None, *, result_only=False):
         # Handling of default values
@@ -131,8 +136,9 @@ class CheckFeatures:
                 # Check MultiIndex
                 try:
                     if not (this_df.columns == CheckFeatures.multiindex).all():
-                        raise ValueError("The df you have passed to this function does not have the right multiindex for "
-                                         "the columns.")
+                        raise ValueError(
+                            "The df you have passed to this function does not have the right multiindex for "
+                            "the columns.")
                 except Exception as e:
                     raise ValueError(f"Your DataFrame do not have the right index. When comparing your column's index "
                                      f"with the reference's index, got exception: {e}")
@@ -156,9 +162,8 @@ class CheckFeatures:
 
             CheckFeatures.n_calls[func.__name__] += 1
             return return_value
+
         return wrapper
-
-
 
 
 if __name__ == '__main__':

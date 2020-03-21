@@ -7,6 +7,7 @@ that reads the two csv files with pandas and evaluate the custom metric.
 # TODO: add here the import necessary to your metric function
 import numpy as np
 
+
 def CAPE_CNR_function(dataframe_y_true, dataframe_y_pred):
     """
 CAPE (Cumulated Absolute Percentage Error) function used by CNR for the evaluation of predictions
@@ -27,13 +28,14 @@ CAPE (Cumulated Absolute Percentage Error) function used by CNR for the evaluati
     """
 
     # CAPE function
-    cape_cnr = 100*np.sum(np.abs(dataframe_y_pred-dataframe_y_true))/np.sum(dataframe_y_true)
+    cape_cnr = 100 * np.sum(np.abs(dataframe_y_pred - dataframe_y_true)) / np.sum(dataframe_y_true)
 
     return cape_cnr
 
 
 if __name__ == '__main__':
     import pandas as pd
+
     CSV_FILE_Y_TRUE = 'Y_test.csv'
     CSV_FILE_Y_PRED = 'Y_test_benchmark.csv'
     df_y_true = pd.read_csv(CSV_FILE_Y_TRUE, index_col=0, sep=',')
