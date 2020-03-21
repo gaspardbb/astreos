@@ -1,20 +1,20 @@
+from typing import List
+
 import numpy as np
 import pandas as pd
+# Useful module to handle different logging levels and avoid "print" statements.
+# You can also specify a minimum verbose with loglevel().
+from logzero import logger
 from sklearn import clone
+from sklearn.linear_model import SGDRegressor
 from sklearn.metrics import make_scorer
 from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.neural_network import MLPRegressor
-from sklearn.linear_model import SGDRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer, StandardScaler
 
 from CAPE_CNR_metric import CAPE_CNR_function
 from features import all_features
 from load_utils import load_data
-
-# Useful module to handle different logging levels and avoid "print" statements.
-# You can also specify a minimum verbose with loglevel().
-from logzero import logger, loglevel
 
 
 def split_data_wf(full_df: pd.DataFrame):
@@ -35,7 +35,7 @@ def handle_nan(X):
     Z = Z.fillna(method='ffill')
     # if pd.isna(Z).values.any():
     #     In some cases,
-        # Z = Z.interpolate()
+    # Z = Z.interpolate()
     return Z
 
 
@@ -49,14 +49,16 @@ class SkRegressorFull(object):
         self.train_valid_ratio = train_valid_ratio
         self.random_state = random_state
         self.best_regressors = []
-
-    def fit(self, X, Y=None, verbose=0):
-        """ Will consider X as the full dataset if Y is None, otherwise behave as sklearn models do """
+        self.score_function = CAPE_CNR_function
 
         handle_nan_trans = FunctionTransformer(handle_nan, check_inverse=False, validate=False)
         steps = [('imputer', handle_nan_trans), ('scaler', StandardScaler()), ('model', self.model())]
         self.pipeline = Pipeline(steps)
-        self.scorer = make_scorer(CAPE_CNR_function, greater_is_better=False)
+        self.scorer = make_scorer(self.score_function, greater_is_better=False)
+
+    def fit(self, X, Y=None, verbose=0):
+        """ Will consider X as the full dataset if Y is None, otherwise behave as sklearn models do """
+
         self.grid = GridSearchCV(self.pipeline, param_grid=self.model_params, cv=5, scoring=self.scorer,
                                  verbose=verbose, error_score='raise')
 
@@ -73,7 +75,6 @@ class SkRegressorFull(object):
 
         else:
             full_wfs_df = split_data_wf(X)
-            logger.debug(len(full_wfs_df))
             self.best_regressors = []
             for i, wf_df in enumerate(full_wfs_df):
                 logger.info(f"Fit on WF {i + 1}")
@@ -90,10 +91,34 @@ class SkRegressorFull(object):
                 self.fit_one_(X_train, X_test, y_train, y_test)
                 self.best_regressors[-1].fit(X_wf, Y_wf)
 
-    def predict(self, X, full=True):
+    def score(self, X, Y=None) -> List[float]:
+        """ Make prediction on X and score it against true value contained either in Y
+         or in column(s) 'Production' of X """
+
+        if Y is not None:
+            assert len(self.best_regressors) == 1, logger.error(
+                "More than one regressor, cannot decide which one to use")
+            X_wfs, Y_wfs = X, Y
+
+        else:
+            full_df_wfs = split_data_wf(X)
+            assert len(full_df_wfs) == len(self.best_regressors), logger.error(
+                f"Different number of regressors ({len(self.best_regressors)}) and datasets ({len(full_df_wfs)})")
+            assert 'Production' in full_df_wfs[0], logger.error("No column 'Prediction in X, cannot score prediction")
+            X_wfs = list(map(lambda df: df.drop('Production', axis=1), full_df_wfs))
+            Y_wfs = list(map(lambda df: df['Production'], full_df_wfs))
+
+        predictions = self.predict(X_wfs)
+        scores = []
+        for prediction, Y_wf in zip(predictions, Y_wfs):
+            scores.append(self.score_function(prediction, Y_wf))
+
+        return scores
+
+    def predict(self, X, full=True) -> List[np.array]:
         if not full:
             assert len(self.best_regressors) == 1
-            return self.best_regressors[0].predict(X)
+            return [self.best_regressors[0].predict(X)]
 
         else:
             assert len(X) == len(self.best_regressors)
@@ -134,7 +159,7 @@ if __name__ == '__main__':
 
     model = SGDRegressor
     parameters = dict(loss='huber', penalty='l2', alpha=0.0001,
-                      fit_intercept=True, max_iter=200, tol=0.001,)
+                      fit_intercept=True, max_iter=200, tol=0.001, )
     parameters = {f"model__{k}": [v] for k, v in parameters.items()}
 
     # model = MLPRegressor
@@ -143,3 +168,10 @@ if __name__ == '__main__':
 
     sk_regressor_full = SkRegressorFull(model, parameters)
     sk_regressor_full.fit(full_df)
+
+    logger.info("Test prediction on full dataset")
+    full_df_wfs = list(map(lambda df: df.drop('Production', axis=1), split_data_wf(full_df)))
+    sk_regressor_full.predict(full_df_wfs)
+
+    logger.info("Test scoring on full dataset")
+    print(sk_regressor_full.score(full_df))
