@@ -4,15 +4,38 @@ import pandas as pd
 from load_utils import CheckFeatures as CF, index_to_multiindex
 
 
+def filter_day_0_mean(df: pd.DataFrame):
+    """For a given time, filter and keeps:
+        . D-2, D-1, accross all hours: h 1...18
+        . D-0, hour 0: h 0
+
+    Alternatives
+    ------------
+    df.xs('T', level="var", axis=1)
+    T.mean(level='D', axis=1)[[-2, -1]]
+    T.mean(level=['D', 'h'], axis=1).xs((0, 0), level=['D', 'h'], axis=1)
+    """
+    columns_to_keep = (df.columns.get_level_values('D') < 0) + (df.columns.get_level_values('h') == 0)
+    # Keep only the right columns
+    result = df.loc[:, columns_to_keep]
+    return result
+
+
+
 @CF.validate
-def mean_of_var(df: pd.DataFrame, var):
-    result = df.xs(var, level='var', axis=1).groupby('WF', axis=1).mean()
+def mean_of_var(df: pd.DataFrame, var, test_set=False):
+    if test_set:
+        df = filter_day_0_mean(df)
+    result = df.xs(var, level='var', axis=1)
+    result = result.groupby('WF', axis=1).mean()
     result.columns = index_to_multiindex(f'{var}_mean', result.columns)
     return result
 
 
 @CF.validate
-def wind_speed(df: pd.DataFrame):
+def wind_speed(df: pd.DataFrame, test_set=False):
+    if test_set:
+        df = filter_day_0_mean(df)
     result = df.xs('U', axis=1, level='var') ** 2 + df.xs('V', axis=1, level='var') ** 2
     result = result.groupby('WF', axis=1).mean()
     result.columns = index_to_multiindex('windspeed', result.columns)
@@ -20,12 +43,17 @@ def wind_speed(df: pd.DataFrame):
 
 
 @CF.validate
-def wind_direction(df: pd.DataFrame):
+def wind_direction(df: pd.DataFrame, test_set=False):
+    if test_set:
+        df = filter_day_0_mean(df)
     u = df.xs('U', axis=1, level='var')
     v = df.xs('V', axis=1, level='var')
-    result = np.arccos(u * v / np.abs(u * v))
+    with np.errstate(invalid="ignore"):
+        result = np.arccos(u * v / np.abs(u * v))
     result = result.groupby('WF', axis=1).mean()
     result.columns = index_to_multiindex('angle', result.columns)
+    # Deal with potential nan values got in arccos computation.
+    result = result.interpolate()
     return result
 
 
@@ -48,7 +76,7 @@ def k_diff(df: pd.DataFrame, k=1, var_level=None):
 
 
 @CF.validate
-def all_features(df: pd.DataFrame, get_diff=[1]):
+def all_features(df: pd.DataFrame, get_diff=[1], test_set=False):
     """
     Compute all the features from the input df.
     All other functions implemented in this file should be added to this function!
@@ -67,10 +95,10 @@ def all_features(df: pd.DataFrame, get_diff=[1]):
         * var: [var_1, ..., var_n]
     """
     # Basic Features
-    temperature = mean_of_var(df, "T")
-    clouds = mean_of_var(df, "CLCT")
-    speed = wind_speed(df)
-    direction = wind_direction(df)
+    temperature = mean_of_var(df, "T", test_set=test_set)
+    clouds = mean_of_var(df, "CLCT", test_set=test_set)
+    speed = wind_speed(df, test_set=test_set)
+    direction = wind_direction(df, test_set=test_set)
     features = pd.concat([temperature, clouds, speed, direction], axis=1)
 
     # Insert your feature function call here!

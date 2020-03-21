@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Any, Union
 
 import numpy as np
 import pandas as pd
@@ -39,8 +39,21 @@ def handle_nan(X):
     return Z
 
 
-class SkRegressorFull(object):
-    """ Apply sklearn regressor to each windfarm separately """
+def handle_none_Y(X, Y):
+    if Y is None:
+        Y = X.xs('Production', level='var', axis=1)
+        X = X.drop('Production', level='var', axis=1)
+
+    if Y.isna().values.sum() > 0:
+        logger.warning("Some target values are Nan! Removing specific lines...")
+        X = X[~Y.isna()]
+        Y = Y[~Y.isna()]
+
+    return X, Y
+
+
+class SkMetaRegressor(object):
+    """Base class for regressing on wind farms with Scikit-learn's regressors."""
 
     def __init__(self, sk_model, model_params, nan_handler=handle_nan, train_valid_ratio=0.2, random_state=42):
         self.nan_handler = FunctionTransformer(nan_handler, check_inverse=False)
@@ -48,13 +61,80 @@ class SkRegressorFull(object):
         self.model_params = model_params
         self.train_valid_ratio = train_valid_ratio
         self.random_state = random_state
-        self.best_regressors = []
         self.score_function = CAPE_CNR_function
+        self.scorer = make_scorer(self.score_function, greater_is_better=False)
 
+        self.best_regressors = []
         handle_nan_trans = FunctionTransformer(handle_nan, check_inverse=False, validate=False)
         steps = [('imputer', handle_nan_trans), ('scaler', StandardScaler()), ('model', self.model())]
         self.pipeline = Pipeline(steps)
-        self.scorer = make_scorer(self.score_function, greater_is_better=False)
+
+    def fit(self, X, Y=None, *args, **kwargs):
+        raise NotImplementedError
+
+    def score(self, X, Y=None, *args, **kwargs):
+        raise NotImplementedError
+
+    def predict(self, X, *args, **kwargs):
+        raise NotImplementedError
+
+
+class SkRegressorAll(SkMetaRegressor):
+    """Apply sklearn regressor on all windfarms."""
+
+    def __init__(self, sk_model, model_params, nan_handler=handle_nan, train_valid_ratio=0.2, random_state=42):
+        super(SkRegressorAll, self).__init__(sk_model, model_params,
+                                             nan_handler=nan_handler,
+                                             train_valid_ratio=train_valid_ratio,
+                                             random_state=random_state)
+
+    def fit(self, X, Y=None, verbose=0, diff_only=True, *args, **kwargs):
+        self.grid = GridSearchCV(self.pipeline, param_grid=self.model_params, cv=5, scoring=self.scorer,
+                                 verbose=verbose, error_score='raise')
+
+        X, Y = handle_none_Y(X, Y)
+        X = X.stack('WF')
+        Y = Y.stack('WF')
+        if diff_only:
+            X = X.filter(like='_diff')
+
+        if hasattr(self, "input_shape"):
+            assert self.input_shape == X.shape[1:]
+        else:
+            pass
+        self.diff_only = diff_only  # This value will be set once
+        self.input_shape = X.shape[1:]
+
+        X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.2, random_state=self.random_state)
+
+        self.grid.fit(X_train, y_train)
+        logger.info("score on test = %3.2f" % (- self.grid.score(X_test, y_test)))
+
+        # self.best_regressors = clone(self.grid.best_estimator_)
+        # self.best_regressors['model'].set_params(**extract_params(self.grid.best_params_))
+
+    def predict(self, X, need_unstacking=False, need_filterting=True, *args, **kwargs):
+        if need_filterting and self.diff_only:
+            X = X.filter(like='_diff')
+        if need_unstacking:
+            X = X.stack('WF')
+        assert X.shape[1:] == self.input_shape
+        return self.grid.predict(X)
+
+    def score(self, X, Y=None, *args, **kwargs):
+        X, Y = handle_none_Y(X, Y)
+        X = X.stack('WF')
+        Y = Y.stack('WF')
+        predictions = self.predict(X)
+        return self.score_function(predictions, Y)
+
+
+class SkRegressorFull(SkMetaRegressor):
+    """ Apply sklearn regressor to each windfarm separately """
+
+    def __init__(self, sk_model, model_params, nan_handler=handle_nan, train_valid_ratio=0.2, random_state=42):
+        super(SkRegressorFull, self).__init__(sk_model, model_params, nan_handler=nan_handler,
+                                              train_valid_ratio=train_valid_ratio, random_state=random_state)
 
     def fit(self, X, Y=None, verbose=0):
         """ Will consider X as the full dataset if Y is None, otherwise behave as sklearn models do """
@@ -175,3 +255,8 @@ if __name__ == '__main__':
 
     logger.info("Test scoring on full dataset")
     print(sk_regressor_full.score(full_df))
+
+    sk_regressor_all = SkRegressorAll(model, parameters)
+    sk_regressor_all.fit(full_df, diff_only=True)
+    logger.info("Test scoring on full dataset -- ALL model")
+    print(sk_regressor_all.score(full_df))
