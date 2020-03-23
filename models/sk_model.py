@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Dict
 
 import numpy as np
 import pandas as pd
@@ -11,6 +11,8 @@ from sklearn.metrics import make_scorer
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer, StandardScaler
+from sklearn.ensemble import StackingRegressor
+from sklearn.linear_model import LinearRegression
 
 from CAPE_CNR_metric import CAPE_CNR_function
 from features import all_features
@@ -39,23 +41,59 @@ def handle_nan(X):
     return Z
 
 
+def _wf_to_index(df: pd.DataFrame):
+    """Puts the WF level to the index and raise an error if there is none.
+    If it is a Serie, returns the DF."""
+    if isinstance(df, pd.Series):
+        return df
+    if 'WF' in df.columns.names:
+        df = df.stack('WF', dropna=False)
+    elif 'WF' not in df.index.names:
+        raise ValueError('Could not find a `WF` level, neither in the index nor in the columns.')
+    return df
+
+
 def handle_none_Y(X, Y):
+    """This handle a Y set to None but X having a 'Production' var.
+    Returns df having WF in the index."""
+
+    # Some sklearn functions turn Y into an array.
+    if isinstance(Y, np.ndarray):
+        Y = pd.Series(Y, index=X.index)
+
+    # MultiIndex does not fit so well with functions
     if Y is None:
-        Y = X.xs('Production', level='var', axis=1)
-        X = X.drop('Production', level='var', axis=1)
+        if isinstance(X.columns, pd.MultiIndex):
+            Y = X.xs('Production', level='var', axis=1)
+        else:
+            Y = X.loc[:, 'Production']
+
+    if 'Production' in X.columns.get_level_values(level='var'):
+        if isinstance(X.columns, pd.MultiIndex):
+            X = X.drop('Production', level='var', axis=1)
+        else:
+            X = X.drop('Production', axis=1)
+
+    X = _wf_to_index(X)
+    Y = _wf_to_index(Y)
+
+    assert X.shape[0] == Y.shape[0]
 
     if Y.isna().values.sum() > 0:
         logger.warning("Some target values are Nan! Removing specific lines...")
         X = X[~Y.isna()]
         Y = Y[~Y.isna()]
 
+    assert X.shape[0] == Y.shape[0]
     return X, Y
 
 
-class SkMetaRegressor(object):
+class SkRegressorMeta(object):
     """Base class for regressing on wind farms with Scikit-learn's regressors."""
+    _estimator_type = "regressor"
 
     def __init__(self, sk_model, model_params, nan_handler=handle_nan, train_valid_ratio=0.2, random_state=42):
+        self.nan_handler_untransformed = handle_nan
         self.nan_handler = FunctionTransformer(nan_handler, check_inverse=False)
         self.model = sk_model
         self.model_params = model_params
@@ -69,17 +107,34 @@ class SkMetaRegressor(object):
         steps = [('imputer', handle_nan_trans), ('scaler', StandardScaler()), ('model', self.model())]
         self.pipeline = Pipeline(steps)
 
+    def get_params(self, deep=True):
+        return dict(sk_model=self.model,
+                    model_params=self.model_params,
+                    nan_handler=self.nan_handler_untransformed,
+                    train_valid_ratio=self.train_valid_ratio,
+                    random_state=self.random_state)
+
     def fit(self, X, Y=None, *args, **kwargs):
         raise NotImplementedError
 
-    def score(self, X, Y=None, *args, **kwargs):
+    def score(self, X, Y=None, individual=False) -> Dict[int, float] or float:
+        """ Make prediction on X and score it against true value contained either in Y
+         or in column(s) 'Production' of X """
+        X, Y = handle_none_Y(X, Y)
+        predictions = self.predict(X)
+        if individual:
+            wf_ids = X.index.get_level_values('WF').unique()
+            scores = {wf_id: self.score_function(predictions.xs(wf_id, level='WF'), Y.xs(wf_id, level='WF')) for wf_id
+                      in wf_ids}
+        else:
+            scores = self.score_function(Y, predictions)
+        return scores
+
+    def predict(self, X, *args, **kwargs) -> pd.Series:
         raise NotImplementedError
 
-    def predict(self, X, *args, **kwargs):
-        raise NotImplementedError
 
-
-class SkRegressorAll(SkMetaRegressor):
+class SkRegressorAll(SkRegressorMeta):
     """Apply sklearn regressor on all windfarms."""
 
     def __init__(self, sk_model, model_params, nan_handler=handle_nan, train_valid_ratio=0.2, random_state=42):
@@ -89,21 +144,24 @@ class SkRegressorAll(SkMetaRegressor):
                                              random_state=random_state)
 
     def fit(self, X, Y=None, verbose=0, diff_only=True, *args, **kwargs):
+        if 'Production' in X.columns.get_level_values('var'):
+            Y = None
+
         self.grid = GridSearchCV(self.pipeline, param_grid=self.model_params, cv=5, scoring=self.scorer,
                                  verbose=verbose, error_score='raise')
 
         X, Y = handle_none_Y(X, Y)
-        X = X.stack('WF')
-        Y = Y.stack('WF')
+
         if diff_only:
             X = X.filter(like='_diff')
 
         if hasattr(self, "input_shape"):
             assert self.input_shape == X.shape[1:]
         else:
-            pass
-        self.diff_only = diff_only  # This value will be set once
-        self.input_shape = X.shape[1:]
+            self.diff_only = diff_only  # This value will be set once
+            self.input_shape = X.shape[1:]
+
+        assert X.shape[0] == Y.shape[0]
 
         X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.2, random_state=self.random_state)
 
@@ -113,104 +171,54 @@ class SkRegressorAll(SkMetaRegressor):
         # self.best_regressors = clone(self.grid.best_estimator_)
         # self.best_regressors['model'].set_params(**extract_params(self.grid.best_params_))
 
-    def predict(self, X, need_unstacking=False, need_filterting=True, *args, **kwargs):
-        if need_filterting and self.diff_only:
+    def predict(self, X, *args, **kwargs):
+        if self.diff_only:
             X = X.filter(like='_diff')
-        if need_unstacking:
+        if 'WF' in X.columns.names:
             X = X.stack('WF')
         assert X.shape[1:] == self.input_shape
-        return self.grid.predict(X)
-
-    def score(self, X, Y=None, *args, **kwargs):
-        X, Y = handle_none_Y(X, Y)
-        X = X.stack('WF')
-        Y = Y.stack('WF')
-        predictions = self.predict(X)
-        return self.score_function(predictions, Y)
+        prediction = self.grid.predict(X)
+        prediction = pd.Series(prediction, index=X.index)
+        return prediction
 
 
-class SkRegressorFull(SkMetaRegressor):
+class SkRegressorIndividual(SkRegressorMeta):
     """ Apply sklearn regressor to each windfarm separately """
 
     def __init__(self, sk_model, model_params, nan_handler=handle_nan, train_valid_ratio=0.2, random_state=42):
-        super(SkRegressorFull, self).__init__(sk_model, model_params, nan_handler=nan_handler,
-                                              train_valid_ratio=train_valid_ratio, random_state=random_state)
+        super(SkRegressorIndividual, self).__init__(sk_model, model_params, nan_handler=nan_handler,
+                                                    train_valid_ratio=train_valid_ratio, random_state=random_state)
 
     def fit(self, X, Y=None, verbose=0):
         """ Will consider X as the full dataset if Y is None, otherwise behave as sklearn models do """
+        if 'Production' in X.columns.get_level_values('var'):
+            Y = None
+
+        X: pd.DataFrame
+        Y: pd.DataFrame
 
         self.grid = GridSearchCV(self.pipeline, param_grid=self.model_params, cv=5, scoring=self.scorer,
                                  verbose=verbose, error_score='raise')
 
-        self.best_regressors = []
+        X, Y = handle_none_Y(X, Y)
+        # At this point, both X and Y have a `WF` entry in the index.
+        wf_ids = X.index.get_level_values('WF').unique()
 
-        if Y is not None:
-            if Y.isna().sum() > 0:
-                logger.warning("Some target values are Nan! Removing specific lines...")
-                X = X[~Y.isna()]
-                Y = Y[~Y.isna()]
-            X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.2, random_state=self.random_state)
-            self.fit_one_(X_train, X_test, y_train, y_test)
-            self.best_regressors[-1].fit(X, Y)
+        self.best_regressors = {}
+        for wf_id in wf_ids:
+            logger.info(f"Fit on WF {wf_id}")
+            X_wf = X.xs(wf_id, level='WF')
+            Y_wf = Y.xs(wf_id, level='WF')
 
-        else:
-            full_wfs_df = split_data_wf(X)
-            self.best_regressors = []
-            for i, wf_df in enumerate(full_wfs_df):
-                logger.info(f"Fit on WF {i + 1}")
-                X_wf = wf_df.drop(['Production'], axis=1)
-                Y_wf = wf_df['Production']
+            assert Y_wf.isna().sum() == 0, "This should have been handled before..."
 
-                if Y_wf.isna().sum() > 0:
-                    logger.warning("Some target values are Nan! Removing specific lines...")
-                    X_wf = X_wf[~Y_wf.isna()]
-                    Y_wf = Y_wf[~Y_wf.isna()]
+            X_train, X_test, y_train, y_test = train_test_split(X_wf, Y_wf, test_size=0.2, random_state=30)
 
-                X_train, X_test, y_train, y_test = train_test_split(X_wf, Y_wf, test_size=0.2, random_state=30)
+            self.fit_one_(X_train, X_test, y_train, y_test, wf_id)
+            self.best_regressors[wf_id].fit(X_wf, Y_wf)
 
-                self.fit_one_(X_train, X_test, y_train, y_test)
-                self.best_regressors[-1].fit(X_wf, Y_wf)
-
-    def score(self, X, Y=None) -> List[float]:
-        """ Make prediction on X and score it against true value contained either in Y
-         or in column(s) 'Production' of X """
-
-        if Y is not None:
-            assert len(self.best_regressors) == 1, logger.error(
-                "More than one regressor, cannot decide which one to use")
-            X_wfs, Y_wfs = X, Y
-
-        else:
-            full_df_wfs = split_data_wf(X)
-            assert len(full_df_wfs) == len(self.best_regressors), logger.error(
-                f"Different number of regressors ({len(self.best_regressors)}) and datasets ({len(full_df_wfs)})")
-            assert 'Production' in full_df_wfs[0], logger.error("No column 'Prediction in X, cannot score prediction")
-            X_wfs = list(map(lambda df: df.drop('Production', axis=1), full_df_wfs))
-            Y_wfs = list(map(lambda df: df['Production'], full_df_wfs))
-
-        predictions = self.predict(X_wfs)
-        scores = []
-        for prediction, Y_wf in zip(predictions, Y_wfs):
-            scores.append(self.score_function(prediction, Y_wf))
-
-        return scores
-
-    def predict(self, X, full=True) -> List[np.array]:
-        if not full:
-            assert len(self.best_regressors) == 1
-            return [np.clip(self.best_regressors[0].predict(X), a_min=0, a_max=np.inf)]
-
-        else:
-            assert len(X) == len(self.best_regressors)
-            predictions = []
-            for i, X_wf in enumerate(X):
-                predictions.append(np.clip(self.best_regressors[i].predict(X_wf), a_min=0, a_max=np.inf))
-            return predictions
-
-    def fit_one_(self, X_train, X_test, y_train, y_test):
+    def fit_one_(self, X_train, X_test, y_train, y_test, wf_id):
         try:
-            # assert not pd.isna(X_train).values.any(), f"Got NaN values in X_train."
-            # assert not pd.isna(y_train).values.any(), f"Got NaN values in y_train."
             self.grid.fit(X_train, y_train)
         except ValueError as e:
             print(
@@ -218,8 +226,24 @@ class SkRegressorFull(SkMetaRegressor):
             raise e
         logger.info("score on test = %3.2f" % (- self.grid.score(X_test, y_test)))
         logger.debug(self.grid.best_params_)
-        self.best_regressors.append(clone(self.pipeline))
-        self.best_regressors[-1]['model'].set_params(**extract_params(self.grid.best_params_))
+        self.best_regressors[wf_id] = clone(self.pipeline)
+        self.best_regressors[wf_id]['model'].set_params(**extract_params(self.grid.best_params_))
+
+
+    def predict(self, X) -> pd.Series:
+        X = _wf_to_index(X)
+        wf_ids = X.index.get_level_values('WF').unique()
+        predictions = {}
+
+        for wf_id in wf_ids:
+            X_wf = X.xs(wf_id, level='WF')
+            Y_wf = np.clip(self.best_regressors[wf_id].predict(X_wf), a_min=0, a_max=np.inf)
+            predictions[wf_id] = pd.Series(Y_wf, index=X_wf.index)
+
+        predictions = pd.DataFrame.from_dict(predictions)
+        predictions.columns = predictions.columns.set_names('WF')
+        predictions = predictions.stack('WF')
+        return predictions
 
 
 def extract_params(best_params):
@@ -229,6 +253,45 @@ def extract_params(best_params):
             k = k[k.find('__') + 2:]
         params[k] = v
     return params
+
+
+def stack_predict(model: StackingRegressor, X):
+    """
+    StackingRegressor does not handle Series output by predict method of bases estimators. Had to recode that.
+    """
+    from sklearn.utils.validation import check_is_fitted
+    check_is_fitted(model)
+
+    predictions = [
+            getattr(est, meth)(X)
+            for est, meth in zip(model.estimators_, model.stack_method_)
+            if est != 'drop'
+        ]
+    predictions = _custom_concatenate_predictions(model, X, predictions)
+
+    predictions = model.final_estimator_.predict(predictions)
+    return predictions
+
+
+def _custom_concatenate_predictions(model, X, predictions):
+    X_meta = []
+    for est_idx, preds in enumerate(predictions):
+        # case where the the estimator returned a 1D array
+        if preds.ndim == 1:
+            if isinstance(preds, pd.Series):
+                X_meta.append(preds.values.reshape(-1, 1))
+            else:
+                X_meta.append(preds.reshape(-1, 1))
+        else:
+            if (model.stack_method_[est_idx] == 'predict_proba' and
+                    len(model.classes_) == 2):
+                X_meta.append(preds[:, 1:])
+            else:
+                X_meta.append(preds)
+    if model.passthrough:
+        X_meta.append(X)
+
+    return np.hstack(X_meta)
 
 
 if __name__ == '__main__':
@@ -246,17 +309,25 @@ if __name__ == '__main__':
     # parameters = {'model__alpha': 10.0 ** np.arange(-5, -4),
     #                'model__hidden_layer_sizes': [(100,) * i for i in range(1, 2)]}
 
-    sk_regressor_full = SkRegressorFull(model, parameters)
-    sk_regressor_full.fit(full_df)
+    logger.info("Fit Individual Regressors")
+    sk_regressor_individual = SkRegressorIndividual(model, parameters)
+    sk_regressor_individual.fit(full_df)
+    logger.info("Scoring for Individual")
+    print(sk_regressor_individual.score(full_df, individual=False))
 
-    logger.info("Test prediction on full dataset")
-    full_df_wfs = list(map(lambda df: df.drop('Production', axis=1), split_data_wf(full_df)))
-    sk_regressor_full.predict(full_df_wfs)
-
-    logger.info("Test scoring on full dataset")
-    print(sk_regressor_full.score(full_df))
-
+    logger.info("Fit All Regressor")
     sk_regressor_all = SkRegressorAll(model, parameters)
     sk_regressor_all.fit(full_df, diff_only=True)
-    logger.info("Test scoring on full dataset -- ALL model")
+    logger.info("Scoring for All")
     print(sk_regressor_all.score(full_df))
+
+    model = StackingRegressor([('All', SkRegressorAll(model, parameters)),
+                               ('Individual', SkRegressorIndividual(model, parameters))],
+                              LinearRegression(normalize=True),
+                              cv=5)
+
+    X, Y = handle_none_Y(full_df, None)
+    model.fit(X, Y)
+    # This does not work
+    # X_pred = model.predict(X)
+    X_pred = stack_predict(model, X)
