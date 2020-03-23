@@ -334,7 +334,7 @@ def split_dataset(full_X_df, full_Y_df, train_valid_ratio=0.8, valid_test_ratio=
 
 if __name__ == '__main__':
     df, target = load_data()
-    features = all_features(df, get_diff=[], test_set=True)
+    features = all_features(df, get_diff=[], test_set=True)  # select no diff as we will do shift to build feat history
 
     full_df = pd.concat([features, target], axis=1)
 
