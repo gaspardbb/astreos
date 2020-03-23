@@ -201,7 +201,12 @@ class SkRegressorFull(SkMetaRegressor):
             return [np.clip(self.best_regressors[0].predict(X), a_min=0, a_max=np.inf)]
 
         else:
-            assert len(X) == len(self.best_regressors)
+            if type(X) == pd.DataFrame:
+                X = split_data_wf(X)
+                assert 'Production' not in X[0], logger.error(
+                    "Column 'Prediction' should not appear")
+            assert len(X) == len(self.best_regressors), logger.error(
+                    f"Different number of regressors ({len(self.best_regressors)}) and datasets ({len(X)})")
             predictions = []
             for i, X_wf in enumerate(X):
                 predictions.append(np.clip(self.best_regressors[i].predict(X_wf), a_min=0, a_max=np.inf))

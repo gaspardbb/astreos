@@ -10,12 +10,17 @@ from models.sk_model import *
 from utils import utils
 from utils.utils import load_obj
 
+# LSTM net default params
 DEFAULT_BATCH_SIZE = 200
 DEFAULT_HIDDEN_DIM = 16
 DEFAULT_NUM_LAYERS = 2
+DEFAULT_DROPOUT = 0.5
+
+# LSTM regressor default params
 DEFAULT_LOSS = nn.MSELoss()
-DEFAULT_NUM_EPOCHS = 40
+DEFAULT_NUM_EPOCHS = 50
 DEFAULT_LR = 5e-3
+
 ROOT = utils.get_project_root()
 LSTM_MODEL_PATH = os.path.join(ROOT, 'models/saved_models/lstm_models')
 
@@ -23,6 +28,15 @@ LSTM_MODEL_PATH = os.path.join(ROOT, 'models/saved_models/lstm_models')
 def CAPE_loss(y_pred, y_true):
     loss = 100 * (y_pred - y_true).abs().sum() / y_true.sum()
     return loss
+
+
+class CapeLoss(object):
+
+    def __init__(self):
+        pass
+
+    def __call__(self, y_pred, y_true):
+        return CAPE_loss(y_pred, y_true)
 
 
 def preprocess_lstm(features_df, shifts=3):
@@ -183,6 +197,8 @@ class LstmRegressor(object):
                     experiment_param["hidden_dim"] = DEFAULT_HIDDEN_DIM
                 if "num_layers" not in experiment_param:
                     experiment_param["num_layers"] = DEFAULT_NUM_LAYERS
+                if "dropout" not in experiment_param:
+                    experiment_param["dropout"] = DEFAULT_DROPOUT
                 batch_size = experiment_param["batch_size"]
                 if self.verbose > 0:
                     logger.info(f"{i} - {experiment_param} - current best score: {self.best_scores[-1]:2f}")
@@ -211,9 +227,10 @@ class LstmRegressor(object):
                     if self.verbose > 1:
                         logger.info(f'Save new model for WF {i}...')
                     torch.save(model_wf.state_dict(), os.path.join(model_path, 'state_dict.pt'))
-                    model_config = {'shift': self.shift, 'scaler': self.scalers[i]}
-                    model_config.update(experiment_param)
-                    utils.save_obj(model_path, model_config, 'config')
+                    model_config = {'shift': self.shift, 'scaler': self.scalers[i], 'loss': loss, 'lr': lr}
+                    lstm_config = experiment_param
+                    utils.save_obj(model_path, model_config, 'model_config')
+                    utils.save_obj(model_path, lstm_config, 'lstm_config')
                     self.best_models[-1] = model_wf
                     self.best_scores[-1] = test_score
             # remove tmp file
@@ -233,7 +250,8 @@ class LstmRegressor(object):
             full_df_wf = full_df_wf.copy()
 
             model_path = os.path.join(self.dir_path, str(i))
-            model_config = load_obj(model_path, 'config')
+            model_config = load_obj(model_path, 'model_config')
+            lstm_config = load_obj(model_path, 'lstm_config')
             shift = model_config.pop('shift')
             assert shift == self.shift
 
@@ -249,7 +267,7 @@ class LstmRegressor(object):
             if len(self.best_models) > 0:
                 model_wf = self.best_models[i - 1]
             else:
-                model_wf = LSTM(lstm_input_size, output_dim=1, batch_first=True, **model_config)
+                model_wf = LSTM(lstm_input_size, output_dim=1, batch_first=True, **lstm_config)
             model_wf.load_state_dict(torch.load(os.path.join(model_path, 'state_dict.pt')))
             model_wf.eval()
             prediction_wf = model_wf(X_wf).detach().numpy()
@@ -338,8 +356,8 @@ if __name__ == '__main__':
 
     full_df = pd.concat([features, target], axis=1)
 
-    lstm_configs = {'loss': [nn.MSELoss(), CAPE_loss, nn.L1Loss()], 'lr': [5e-3, 1e-3, 5e-4],
-                    'batch_size': [64, 128, 256]}
+    lstm_configs = {'loss': [nn.MSELoss(), CapeLoss(), nn.L1Loss()], 'lr': [5e-3, 1e-3, 5e-4],
+                    'batch_size': [64, 128, 256], 'num_layers': [2, 3]}
 
     lstm_regressor = LstmRegressor(lstm_configs, shift=12, id="mean_12")
     lstm_regressor.fit(full_df)
