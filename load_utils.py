@@ -18,18 +18,20 @@ def index_to_multiindex(new_key, index, level='var'):
 
 def load_train_data(path_train='data/X_train_v2.csv', time_index_only=True, crop_train_period=True):
     DeprecationWarning("Deprecated. Use `load_data()`.")
-    return load_data(path_train=path_train, time_index_only=time_index_only, crop_train_period=crop_train_period)[0]
+    return load_data(path_X=path_train, time_index_only=time_index_only, crop_train_period=crop_train_period)[0]
 
 
-def load_data(path_train='data/X_train_v2.csv',
-              path_test="data/Y_train_sl9m6Jh.csv",
+def load_data(path_X='data/X_train_v2.csv',
+              path_Y="data/Y_train_sl9m6Jh.csv",
               time_index_only=True, crop_train_period=True):
     """
     Load the training data into a dataframe.
 
     Parameters
     ----------
-    path_train: str
+    path_X: str
+        Path in which to find the X_train csv file.
+    path_Y: str, optional
         Path in which to find the X_train csv file.
     time_index_only: bool, optional
         Whether to have 1 or 2 multiindex.
@@ -44,28 +46,29 @@ def load_data(path_train='data/X_train_v2.csv',
     df: pd.DataFrame
         A pandas dataframe.
     """
-    path_train = os.path.join(get_project_root(), path_train)
-    path_test = os.path.join(get_project_root(), path_test)
-    df = pd.read_csv(path_train, index_col='ID')
-    df_target = pd.read_csv(path_test, index_col='ID')
+    path_X = os.path.join(get_project_root(), path_X)
+    df_X = pd.read_csv(path_X, index_col='ID')
 
     # Otherwise, the time column is a dumb index column
-    df = df.set_index('Time')
-    df.index = pd.to_datetime(df.index)
+    df_X = df_X.set_index('Time')
+    df_X.index = pd.to_datetime(df_X.index)
 
     # Otherwise, dtype=Object=terrible
-    df['WF'] = df['WF'].astype('category')
-    df['WF'] = df['WF'].cat.rename_categories(range(1, 7))
+    df_X['WF'] = df_X['WF'].astype('category')
+    df_X['WF'] = df_X['WF'].cat.rename_categories(range(1, 7))
 
-    # Before transforming the index of the DF, we add the WF information to the target
-    df_target.index = df.index
-    df_target['WF'] = df['WF']
-    # We pivot it so that the WF is in the columns
-    df_target = df_target.pivot(columns='WF', values='Production')
-    df_target.columns = index_to_multiindex('Production', df_target.columns, level="var")
+    # Before transforming the index of the DF, we add the WF information to the target if any
+    if path_Y is not None:
+        path_Y = os.path.join(get_project_root(), path_Y)
+        df_Y = pd.read_csv(path_Y, index_col='ID')
+        df_Y.index = df_X.index
+        df_Y['WF'] = df_X['WF']
+        # We pivot it so that the WF is in the columns
+        df_Y = df_Y.pivot(columns='WF', values='Production')
+        df_Y.columns = index_to_multiindex('Production', df_Y.columns, level="var")
 
     # First we define the multiindex we will use
-    multiindex = [tuple(col.split('_')) for col in df.columns[1:]]
+    multiindex = [tuple(col.split('_')) for col in df_X.columns[1:]]
     for i, (nwp, hour, day, var) in enumerate(multiindex):
         multiindex[i] = (int(nwp[-1]), 0 if day == 'D' else int(day[1:]), int(hour[:2]), var)
     multiindex = pd.MultiIndex.from_tuples(multiindex, names=['NWP', 'D', 'h', 'var'])
@@ -74,23 +77,26 @@ def load_data(path_train='data/X_train_v2.csv',
     list_of_groups = []
     list_of_labels = []
 
-    for labels, group in df.groupby('WF'):
+    for labels, group in df_X.groupby('WF'):
         group = group.drop('WF', axis=1)
         group.columns = multiindex
         list_of_labels.append(labels)
         list_of_groups.append(group)
 
     # And finally we concatenate all WF
-    df = pd.concat(list_of_groups, axis=1, keys=list_of_labels, names=['WF'])
+    df_X = pd.concat(list_of_groups, axis=1, keys=list_of_labels, names=['WF'])
 
     if crop_train_period:
-        df = df.loc[pd.to_datetime('2018-05-01 00:00:00'):pd.to_datetime('2019-01-15 23:00:00')]
-        df_target = df_target.loc[pd.to_datetime('2018-05-01 00:00:00'):pd.to_datetime('2019-01-15 23:00:00')]
+        df_X = df_X.loc[pd.to_datetime('2018-05-01 00:00:00'):pd.to_datetime('2019-01-15 23:00:00')]
+        if path_Y is not None:
+            df_Y = df_Y.loc[pd.to_datetime('2018-05-01 00:00:00'):pd.to_datetime('2019-01-15 23:00:00')]
 
     if not time_index_only:
-        df = df.stack(level='WF')
+        df_X = df_X.stack(level='WF')
 
-    return df, df_target
+    if path_Y is not None:
+        return df_X, df_Y
+    return df_X
 
 
 def save_multiindex(df: pd.DataFrame, path='save/'):
@@ -166,7 +172,6 @@ class CheckFeatures:
         return wrapper
 
 
-
-
 if __name__ == '__main__':
     df_features, df_target = load_data(time_index_only=False)
+    df_features = load_data(path_X='data/X_test_v2.csv', path_Y=None)

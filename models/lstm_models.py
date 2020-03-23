@@ -8,6 +8,7 @@ from torch.utils.data import TensorDataset, DataLoader
 
 from models.sk_model import *
 from utils import utils
+from utils.utils import load_obj
 
 DEFAULT_BATCH_SIZE = 200
 DEFAULT_HIDDEN_DIM = 16
@@ -113,7 +114,7 @@ class LstmRegressor(object):
         self.shift = shift
         self.id = id
 
-        self.scalers = []
+        self.scalers = {}
         self.best_models = []
         self.best_scores = []
 
@@ -132,8 +133,9 @@ class LstmRegressor(object):
         for i, full_df_wf, prod_df_wf in zip(*(np.arange(1, len(full_df_wfs) + 1), full_df_wfs, prod_df_wfs)):
             self.best_scores.append(np.inf)
             self.best_models.append(None)
-            # data conditioning #
 
+            # ----------  data conditioning  ---------- #
+            # fill na
             full_df_wf = handle_nan(full_df_wf)
 
             # split_dataset data between train / valid / test
@@ -144,7 +146,7 @@ class LstmRegressor(object):
             scaler = StandardScaler()
             train_X_df[:] = scaler.fit_transform(train_X_df)
             valid_X_df[:], test_X_df[:] = scaler.transform(valid_X_df), scaler.transform(test_X_df)
-            self.scalers.append(scaler)
+            self.scalers[i] = scaler
 
             # shift
             train_X = preprocess_lstm(train_X_df, shifts=self.shift)
@@ -191,43 +193,71 @@ class LstmRegressor(object):
                     'num_epochs')
 
                 train_loader = DataLoader(train_data, shuffle=True, batch_size=batch_size)
-                val_loader = DataLoader(val_data, shuffle=True, batch_size=batch_size)
 
                 lstm_input_size = train_X.shape[-1]
-                model = LSTM(lstm_input_size, output_dim=1, batch_first=True, **experiment_param)
+                model_wf = LSTM(lstm_input_size, output_dim=1, batch_first=True, **experiment_param)
 
-                train_model(model, train_loader, val_data, loss, tmp_model_path, num_epochs=num_epochs, lr=lr,
+                train_model(model_wf, train_loader, val_data, loss, tmp_model_path, num_epochs=num_epochs, lr=lr,
                             verbose=self.verbose)
 
                 # Loading the best model to evaluate on test
-                model.load_state_dict(torch.load(os.path.join(tmp_model_path, 'state_dict.pt')))
-                model.eval()
-                test_score = CAPE_loss(model(test_data.tensors[0]).squeeze(), test_data.tensors[1]).item()
+                model_wf.load_state_dict(torch.load(os.path.join(tmp_model_path, 'state_dict.pt')))
+                model_wf.eval()
+                test_score = CAPE_loss(model_wf(test_data.tensors[0]).squeeze(), test_data.tensors[1]).item()
                 if self.verbose > 1:
                     logger.info("Test loss: {:.3f}".format(test_score))
 
                 if test_score < self.best_scores[-1]:
                     if self.verbose > 1:
                         logger.info(f'Save new model for WF {i}...')
-                    torch.save(model.state_dict(), os.path.join(model_path, 'state_dict.pt'))
-                    model_config = {'shift': self.shift}
+                    torch.save(model_wf.state_dict(), os.path.join(model_path, 'state_dict.pt'))
+                    model_config = {'shift': self.shift, 'scaler': self.scalers[i]}
                     model_config.update(experiment_param)
                     utils.save_obj(model_path, model_config, 'config')
-                    self.best_models[-1] = model
+                    self.best_models[-1] = model_wf
                     self.best_scores[-1] = test_score
             # remove tmp file
             shutil.rmtree(tmp_model_path)
 
     def predict(self, X):
         """ X should be full feature DataFrame for all WF """
-        if 'production' in X.columns:
-            full_df_wfs = list(map(lambda features_df: features_df.drop('Production', axis=1), split_data_wf(X)))
-        else:
-            full_df_wfs = split_data_wf(X)
 
-        for full_df_wf in full_df_wfs:
-            # load best model, preprocess df, model forward to get predictions
-            pass
+        full_df_wfs = split_data_wf(X)
+        if 'Production' in full_df_wfs[0].columns:
+            full_df_wfs = list(map(lambda features_df: features_df.drop('Production', axis=1), full_df_wfs))
+
+        predictions = []
+
+        for i, full_df_wf in enumerate(full_df_wfs):
+            i += 1
+            full_df_wf = full_df_wf.copy()
+
+            model_path = os.path.join(self.dir_path, str(i))
+            model_config = load_obj(model_path, 'config')
+            shift = model_config.pop('shift')
+            assert shift == self.shift
+
+            # preprocess full_df_wf
+            full_df_wf = handle_nan(full_df_wf)  # fill na
+            scaler = model_config.pop('scaler')
+            full_df_wf[:] = scaler.transform(full_df_wf)  # scale
+            X_wf = preprocess_lstm(full_df_wf, shifts=self.shift)  # shift
+            X_wf = torch.from_numpy(X_wf.copy()).float()  # torchize
+            lstm_input_size = X_wf.shape[-1]
+
+            # load best model, model forward to get predictions
+            if len(self.best_models) > 0:
+                model_wf = self.best_models[i - 1]
+            else:
+                model_wf = LSTM(lstm_input_size, output_dim=1, batch_first=True, **model_config)
+            model_wf.load_state_dict(torch.load(os.path.join(model_path, 'state_dict.pt')))
+            model_wf.eval()
+            prediction_wf = model_wf(X_wf).detach().numpy()
+
+            predictions.append(prediction_wf)
+
+        return predictions
+
 
 def handle_nan_Y(X, Y, verbose=0):
     if np.any(np.isnan(Y)):
@@ -304,12 +334,14 @@ def split_dataset(full_X_df, full_Y_df, train_valid_ratio=0.8, valid_test_ratio=
 
 if __name__ == '__main__':
     df, target = load_data()
-    features = all_features(df, get_diff=[], test_set=True)
+    features = all_features(df, get_diff=[], test_set=True)  # select no diff as we will do shift to build feat history
 
     full_df = pd.concat([features, target], axis=1)
 
-    lstm_configs = {'loss': [nn.MSELoss(), CAPE_loss], 'lr': [5e-3, 1e-3]}
-    lstm_regressor = LstmRegressor(lstm_configs, shift=12)
+    lstm_configs = {'loss': [nn.MSELoss(), CAPE_loss, nn.L1Loss()], 'lr': [5e-3, 1e-3, 5e-4],
+                    'batch_size': [64, 128, 256]}
+
+    lstm_regressor = LstmRegressor(lstm_configs, shift=12, id="mean_12")
     lstm_regressor.fit(full_df)
 
     logger.info(f"Done... got scores {lstm_regressor.best_scores} (mean: {np.mean(lstm_regressor.best_scores)}")

@@ -4,7 +4,6 @@ The custom metric script must contain the definition of custom_metric_function a
 that reads the two csv files with pandas and evaluate the custom metric.
 """
 
-# TODO: add here the import necessary to your metric function
 import numpy as np
 
 
