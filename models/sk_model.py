@@ -1,4 +1,4 @@
-from typing import List, Any, Union
+from typing import List
 
 import numpy as np
 import pandas as pd
@@ -198,13 +198,13 @@ class SkRegressorFull(SkMetaRegressor):
     def predict(self, X, full=True) -> List[np.array]:
         if not full:
             assert len(self.best_regressors) == 1
-            return [self.best_regressors[0].predict(X)]
+            return [np.clip(self.best_regressors[0].predict(X), a_min=0, a_max=np.inf)]
 
         else:
             assert len(X) == len(self.best_regressors)
             predictions = []
             for i, X_wf in enumerate(X):
-                predictions.append(self.best_regressors[i].predict(X_wf))
+                predictions.append(np.clip(self.best_regressors[i].predict(X_wf), a_min=0, a_max=np.inf))
             return predictions
 
     def fit_one_(self, X_train, X_test, y_train, y_test):
@@ -234,7 +234,7 @@ def extract_params(best_params):
 if __name__ == '__main__':
     print("Load dataset...")
     df, target = load_data()
-    features = all_features(df, get_diff=[1])
+    features = all_features(df, get_diff=[1], test_set=True)
     full_df = pd.concat([features, target], axis=1)
 
     model = SGDRegressor

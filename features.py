@@ -21,7 +21,6 @@ def filter_day_0_mean(df: pd.DataFrame):
     return result
 
 
-
 @CF.validate
 def mean_of_var(df: pd.DataFrame, var, test_set=False):
     if test_set:
@@ -134,6 +133,3 @@ if __name__ == '__main__':
     # Puts WF in columns
     full_df = full_df.stack('WF').reset_index(level='WF')
     full_df.columns.set_names('', inplace=True)
-
-    import matplotlib.pyplot as plt
-    import seaborn as sns

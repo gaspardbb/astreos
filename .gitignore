@@ -2,3 +2,11 @@
 /basicenv
 .idea
 model_test.ipynb
+plots-Antoine.ipynb
+
+__pycache__/
+models/__pycache__/
+utils/__pycache__/
+
+draft.ipynb
+lstm_model.ipynb
