@@ -308,51 +308,53 @@ if __name__ == '__main__':
     #                   fit_intercept=True, max_iter=200, tol=0.001, )
     # parameters = {f"model__{k}": [v] for k, v in parameters.items()}
 
-    model = MLPRegressor
+    model_sk = MLPRegressor
     parameters = {'model__alpha': 10.0 ** np.arange(-5, -4),
-                   'model__hidden_layer_sizes': [(100,) * i for i in range(1, 2)]}
+                   'model__hidden_layer_sizes': [(100,) * i for i in range(1, 2, 3)],
+                  'model__max_iter': [500]}
 
     logger.info("Fit Individual Regressors")
-    sk_regressor_individual = SkRegressorIndividual(model, parameters)
+    sk_regressor_individual = SkRegressorIndividual(model_sk, parameters)
     sk_regressor_individual.fit(full_df)
     logger.info("Scoring for Individual")
     print(sk_regressor_individual.score(full_df, individual=False))
 
-    logger.info("Fit All Regressor")
-    sk_regressor_all = SkRegressorAll(model, parameters)
-    sk_regressor_all.fit(full_df, diff_only=True)
-    logger.info("Scoring for All")
-    print(sk_regressor_all.score(full_df))
-
-    model = StackingRegressor([('All', SkRegressorAll(model, parameters)),
-                               ('Individual', SkRegressorIndividual(model, parameters))],
-                              LinearRegression(normalize=True),
-                              cv=5, passthrough=True)
-
-    X, Y = handle_none_Y(full_df, None)
-    X = handle_nan(X)
-    model.fit(X, Y)
-    # This does not work
-    # X_pred = model.predict(X)
-    y_pred_combined = stack_predict(model, X)
-    y_pred_combined = pd.Series(y_pred_combined, index=X.index)
-    print(CAPE_CNR_function(Y, y_pred_combined))
-
-    y_pred_individual = sk_regressor_individual.predict(X)
-    all_y = pd.concat([Y, y_pred_combined, y_pred_individual], axis=1,
-                      keys=['True', 'Pred_combined', 'Pred_individual'])
-    all_y = all_y.reset_index()
-
-    import seaborn as sns
-    import matplotlib.pyplot as plt
-    plt.style.use("ggplot")
-
-    g = sns.FacetGrid(all_y, row='WF')
-    g = g.map(plt.plot, "Time", 'True', label='True', color="r")
-    g = g.map(plt.plot, "Time", 'Pred_combined', label='Pred, Combined', color="b")
-    g = g.map(plt.plot, "Time", 'Pred_individual', label='Pred, Individual', color="g")
-
-    plt.legend()
-    plt.show()
-
-
+    # logger.info("Fit All Regressor")
+    # sk_regressor_all = SkRegressorAll(model_sk, parameters)
+    # sk_regressor_all.fit(full_df, diff_only=True)
+    # logger.info("Scoring for All")
+    # print(sk_regressor_all.score(full_df))
+    #
+    # model = StackingRegressor([('All', SkRegressorAll(model_sk, parameters)),
+    #                               ('Individual', SkRegressorIndividual(model_sk, parameters))],
+    #                              LinearRegression(normalize=True),
+    #                              cv=5,
+    #                              passthrough=True)
+    #
+    # X, Y = handle_none_Y(full_df, None)
+    # X = handle_nan(X)
+    # model.fit(X, Y)
+    # # This does not work
+    # # X_pred = model.predict(X)
+    # y_pred_combined = stack_predict(model, X)
+    # y_pred_combined = pd.Series(y_pred_combined, index=X.index)
+    # print(CAPE_CNR_function(Y, y_pred_combined))
+    #
+    # y_pred_individual = sk_regressor_individual.predict(X)
+    # all_y = pd.concat([Y, y_pred_combined, y_pred_individual], axis=1,
+    #                   keys=['True', 'Pred_combined', 'Pred_individual'])
+    # all_y = all_y.reset_index()
+    #
+    # import seaborn as sns
+    # import matplotlib.pyplot as plt
+    # plt.style.use("ggplot")
+    #
+    # g = sns.FacetGrid(all_y, row='WF')
+    # g = g.map(plt.plot, "Time", 'True', label='True', color="r")
+    # g = g.map(plt.plot, "Time", 'Pred_combined', label='Pred, Combined', color="b")
+    # g = g.map(plt.plot, "Time", 'Pred_individual', label='Pred, Individual', color="g")
+    #
+    # plt.legend()
+    # plt.show()
+    #
+    #

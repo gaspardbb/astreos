@@ -6,6 +6,7 @@ from functools import partial
 
 import numpy as np
 import pandas as pd
+from logzero import logger
 
 from utils.utils import get_project_root
 
@@ -14,6 +15,38 @@ def index_to_multiindex(new_key, index, level='var'):
     multiindex = pd.MultiIndex.from_arrays([index, [new_key] * len(index)],
                                            names=index.names + [level])
     return multiindex
+
+
+def load_index(path_X='data/X_train_v2.csv'):
+    """Returns a DataFrame with one column: 'ID' and index a MultiIndex ('Time', 'WF')."""
+    path_X = os.path.join(get_project_root(), path_X)
+    df_X = pd.read_csv(path_X)
+    df_X = df_X[['ID', 'Time', 'WF']]
+    df_X['Time'] = pd.to_datetime(df_X['Time'])
+
+    df_X['WF'] = df_X['WF'].astype('category')
+    df_X['WF'] = df_X['WF'].cat.rename_categories(range(1, 7))
+
+    df_X = df_X.set_index(['Time', 'WF'])
+    df_X['ID'] = df_X['ID'].astype('int')
+    return df_X
+
+
+def add_ID_column(predictions, path_X='data/X_train_v2.csv'):
+    """Add an "ID" column, where such column was fetched from a CSV. Concatenation occurs according to time and WF
+    id."""
+    df_id = load_index(path_X)
+    if not isinstance(predictions, pd.Series):
+        predictions = predictions['Production']
+    difference = predictions.index.difference(df_id.index)
+    if len(difference) > 0:
+        logger.warning(f'These values are in the prediction Series but not in the ID Serie ({len(difference)})\n'
+                    f'{difference}')
+        logger.warning('DROPPING THEM.')
+    result = pd.concat([df_id['ID'], predictions], axis=1, keys=['ID', 'Production'])
+    result = result[~result['ID'].isna()]
+    result['ID'] = result['ID'].astype('int')
+    return result
 
 
 def load_train_data(path_train='data/X_train_v2.csv', time_index_only=True, crop_train_period=True):
@@ -48,24 +81,35 @@ def load_data(path_X='data/X_train_v2.csv',
     """
     path_X = os.path.join(get_project_root(), path_X)
     df_X = pd.read_csv(path_X, index_col='ID')
-
-    # Otherwise, the time column is a dumb index column
-    df_X = df_X.set_index('Time')
-    df_X.index = pd.to_datetime(df_X.index)
+    df_X.index = df_X.index.astype('int')
 
     # Otherwise, dtype=Object=terrible
     df_X['WF'] = df_X['WF'].astype('category')
     df_X['WF'] = df_X['WF'].cat.rename_categories(range(1, 7))
 
+    # Oterwise, dtype=str
+    df_X['Time'] = pd.to_datetime(df_X['Time'])
+
     # Before transforming the index of the DF, we add the WF information to the target if any
     if path_Y is not None:
         path_Y = os.path.join(get_project_root(), path_Y)
         df_Y = pd.read_csv(path_Y, index_col='ID')
-        df_Y.index = df_X.index
-        df_Y['WF'] = df_X['WF']
+        df_Y.index = df_Y.index.astype('int')
+        # To be sure X and Y share the same ID, the join is done on the ID index.
+        full_df = pd.concat([df_X, df_Y], axis=1)
+
+        df_Y = full_df[['Time', 'WF', 'Production']]
         # We pivot it so that the WF is in the columns
-        df_Y = df_Y.pivot(columns='WF', values='Production')
-        df_Y.columns = index_to_multiindex('Production', df_Y.columns, level="var")
+        # df_Y = df_Y.pivot(columns='WF', values='Production')
+        df_Y = df_Y.set_index(['Time', 'WF'])
+        df_Y.columns = df_Y.columns.set_names('var')
+        df_Y = df_Y.unstack('WF')
+        df_Y.columns = df_Y.columns.reorder_levels(['WF', 'var'])
+
+        df_X = full_df.drop('Production', axis=1)
+
+    # Otherwise, the time column is a dumb index column
+    df_X = df_X.set_index('Time')
 
     # First we define the multiindex we will use
     multiindex = [tuple(col.split('_')) for col in df_X.columns[1:]]
