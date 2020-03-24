@@ -238,6 +238,8 @@ class SkRegressorIndividual(SkRegressorMeta):
 
         for wf_id in wf_ids:
             X_wf = X.xs(wf_id, level='WF')
+            if 'Production' in X_wf.columns:
+                X_wf = X_wf.drop('Production', axis=1)
             Y_wf = np.clip(self.best_regressors[wf_id].predict(X_wf), a_min=0, a_max=np.inf)
             predictions[wf_id] = pd.Series(Y_wf, index=X_wf.index)
 
