@@ -213,8 +213,12 @@ class LstmRegressor(object):
                 lstm_input_size = train_X.shape[-1]
                 model_wf = LSTM(lstm_input_size, output_dim=1, batch_first=True, **experiment_param)
 
-                train_model(model_wf, train_loader, val_data, loss, tmp_model_path, num_epochs=num_epochs, lr=lr,
-                            verbose=self.verbose)
+                finished = train_model(model_wf, train_loader, val_data, loss, tmp_model_path, num_epochs=num_epochs,
+                                       lr=lr, verbose=self.verbose)
+
+                if not finished:
+                    logger.info('Not finished...')
+                    continue
 
                 # Loading the best model to evaluate on test
                 model_wf.load_state_dict(torch.load(os.path.join(tmp_model_path, 'state_dict.pt')))
@@ -321,7 +325,8 @@ def train_model(model, train_loader, val_data, loss, save_path, num_epochs, lr, 
                 val_h = model.init_hidden()
                 model.eval()
                 val_loss = CAPE_loss(model(val_data.tensors[0]).squeeze(), val_data.tensors[1])
-
+                if val_loss > 99.9:
+                    return False
                 model.train()
                 if verbose > 0:
                     logger.info("Epoch: {}/{}...".format(t + 1, num_epochs))
@@ -336,7 +341,7 @@ def train_model(model, train_loader, val_data, loss, save_path, num_epochs, lr, 
                                                                                                       val_loss))
                     valid_loss_min = val_loss
 
-    return
+    return True
 
 
 def split_dataset(full_X_df, full_Y_df, train_valid_ratio=0.8, valid_test_ratio=0.5):
@@ -356,10 +361,10 @@ if __name__ == '__main__':
 
     full_df = pd.concat([features, target], axis=1)
 
-    lstm_configs = {'loss': [nn.MSELoss(), CapeLoss(), nn.L1Loss()], 'lr': [5e-3, 1e-3, 5e-4],
-                    'batch_size': [64, 128, 256], 'num_layers': [2, 3]}
+    lstm_configs = {'loss': [nn.MSELoss(), CapeLoss(), nn.L1Loss()], 'lr': [5e-3],
+                    'batch_size': [64, 256], 'num_layers': [2], 'hidden_dim': [16, 32], 'dropout': [0.25, 0.5]}
 
-    lstm_regressor = LstmRegressor(lstm_configs, shift=12, id="mean_12")
+    lstm_regressor = LstmRegressor(lstm_configs, shift=24, id="mean_24")
     lstm_regressor.fit(full_df)
 
     logger.info(f"Done... got scores {lstm_regressor.best_scores} (mean: {np.mean(lstm_regressor.best_scores)}")
